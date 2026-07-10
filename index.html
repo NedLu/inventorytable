@@ -152,7 +152,6 @@
         const ADMIN_EMAIL = "w28486017@gmail.com";
         // 補回專屬網址變數
         const myWebsiteUrl = "https://nedlu.github.io/inventorytable/";
-        // ==========================================
         
         const firebaseConfig = {
             apiKey: "AIzaSyAQhvnr9GJsuJeN-STlvMaEvvQafyp45Dw",
@@ -182,3 +181,276 @@
                 
                 isAdmin = (user.email === ADMIN_EMAIL);
                 document.getElementById('admin-section').style.display = isAdmin ? 'block' : 'none';
+                document.querySelectorAll('.admin-only').forEach(el => el.style.display = isAdmin ? 'table-cell' : 'none');
+                
+                loadInventory();
+            } else {
+                document.getElementById('login-section').style.display = 'block';
+                document.getElementById('app-section').style.display = 'none';
+            }
+        });
+
+        // 登入/登出按鈕事件
+        document.getElementById('btn-login').addEventListener('click', () => {
+            signInWithEmailAndPassword(auth, document.getElementById('login-email').value, document.getElementById('login-password').value)
+                .catch(e => alert("登入失敗，請檢查帳號密碼"));
+        });
+        document.getElementById('btn-logout').addEventListener('click', () => signOut(auth));
+
+        // 篩選器按鈕事件
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active');
+                currentFilter = e.target.getAttribute('data-filter');
+                renderTable(); 
+            });
+        });
+
+        // 新增資料事件 (含圖片壓縮邏輯)
+        document.getElementById('btn-add').addEventListener('click', async () => {
+            const name = document.getElementById('med-name').value.trim();
+            const addQty = parseInt(document.getElementById('add-qty').value);
+            const qtyUnit = document.getElementById('qty-unit').value;
+            const packQty = document.getElementById('pack-qty').value; 
+            const capacity = document.getElementById('capacity').value; 
+            const capUnit = document.getElementById('capacity-unit').value;
+            const expDate = document.getElementById('exp-date').value;
+            const warningDays = document.getElementById('warning-days').value;
+            const imageFile = document.getElementById('med-image').files[0];
+
+            if(!name || !addQty || !packQty || !capacity || !expDate) { alert("請填寫所有欄位！"); return; }
+
+            const btnAdd = document.getElementById('btn-add');
+            btnAdd.disabled = true;
+            btnAdd.innerText = "資料與圖片處理中，請稍候...";
+
+            try {
+                let imageUrl = "";
+                
+                // 圖片壓縮與上傳模組
+                if (imageFile) {
+                    const compressedFile = await new Promise((resolve) => {
+                        const reader = new FileReader();
+                        reader.readAsDataURL(imageFile);
+                        reader.onload = (event) => {
+                            const img = new Image();
+                            img.src = event.target.result;
+                            img.onload = () => {
+                                const canvas = document.createElement('canvas');
+                                const MAX_WIDTH = 800; // 壓縮最大寬度設定
+                                
+                                // 防止小圖被放大破壞畫質
+                                let targetWidth = img.width;
+                                let targetHeight = img.height;
+                                if (img.width > MAX_WIDTH) {
+                                    targetWidth = MAX_WIDTH;
+                                    targetHeight = img.height * (MAX_WIDTH / img.width);
+                                }
+                                
+                                canvas.width = targetWidth;
+                                canvas.height = targetHeight;
+                                const ctx = canvas.getContext('2d');
+                                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                                
+                                // 轉換為壓縮後的 Blob 檔案，品質 0.7
+                                canvas.toBlob((blob) => {
+                                    resolve(new File([blob], imageFile.name, {
+                                        type: 'image/jpeg',
+                                        lastModified: Date.now()
+                                    }));
+                                }, 'image/jpeg', 0.7);
+                            };
+                        };
+                    });
+
+                    // 執行 Storage 上傳
+                    const imageRef = ref(storage, `med_images/${Date.now()}_${compressedFile.name}`);
+                    await uploadBytes(imageRef, compressedFile);
+                    imageUrl = await getDownloadURL(imageRef);
+                }
+
+                // 資料庫組合寫入
+                const specString = `${packQty} * ${capacity}${capUnit}`;
+
+                await addDoc(collection(db, "inventory"), {
+                    name: name,
+                    specStr: specString,
+                    qtyUnit: qtyUnit,
+                    expDate: expDate,
+                    stock: addQty, 
+                    imageUrl: imageUrl, 
+                    warningDays: parseInt(warningDays),
+                    createdAt: new Date()
+                });
+                
+                // 行事曆連結生成
+                const expirationDate = new Date(expDate);
+                const notifyDate = new Date(expirationDate);
+                notifyDate.setDate(notifyDate.getDate() - parseInt(warningDays));
+
+                const formatEventDate = (date) => date.toISOString().split('T')[0].replace(/-/g, '');
+                const eventDateStr = formatEventDate(notifyDate) + '/' + formatEventDate(notifyDate);
+
+                const details = `【藥品到期預警】\n\n商品名稱：${name}\n規格：${specString}\n本次新增庫存：${addQty} ${qtyUnit}\n實際有效期限：${expDate}\n\n💡 提醒：若此批藥品已提前食用完畢，請直接忽略或刪除此通知！\n🔗 點此回到庫存總表更新最新狀態：${myWebsiteUrl}`;
+                
+                const baseUrl = "https://calendar.google.com/calendar/render?action=TEMPLATE";
+                const title = encodeURIComponent(`[藥品到期] ${name} (${specString})`);
+                const detailsEncoded = encodeURIComponent(details);
+                const finalUrl = `${baseUrl}&text=${title}&dates=${eventDateStr}&details=${detailsEncoded}`;
+
+                window.open(finalUrl, '_blank');
+
+                // 清空表單
+                document.getElementById('med-name').value = '';
+                document.getElementById('add-qty').value = '1';
+                document.getElementById('pack-qty').value = '';
+                document.getElementById('capacity').value = '';
+                document.getElementById('exp-date').value = '';
+                document.getElementById('med-image').value = '';
+                
+            } catch (e) { 
+                console.error(e);
+                alert("新增失敗，請檢查網路連線或 Storage 權限設定。"); 
+            } finally {
+                btnAdd.disabled = false;
+                btnAdd.innerText = "新增批次庫存並加入行事曆 🗓️";
+            }
+        });
+
+        // 讀取資料庫 (即時監聽)
+        function loadInventory() {
+            const q = query(collection(db, "inventory"), orderBy("expDate"));
+            onSnapshot(q, (querySnapshot) => {
+                globalRawData = [];
+                const nameSet = new Set(); 
+
+                querySnapshot.forEach((docSnap) => {
+                    const data = docSnap.data();
+                    globalRawData.push({ id: docSnap.id, ...data });
+                    nameSet.add(data.name);
+                });
+
+                // 更新下拉歷史清單
+                const dataList = document.getElementById('med-history-list');
+                dataList.innerHTML = '';
+                nameSet.forEach(name => {
+                    dataList.innerHTML += `<option value="${name}">`;
+                });
+
+                renderTable();
+            });
+        }
+
+        // 渲染表格與歸類邏輯
+        function renderTable() {
+            const tbody = document.getElementById('inventory-list');
+            tbody.innerHTML = ''; 
+
+            const groupedProducts = {};
+
+            // 步驟一：依據複合鍵歸類 (繼承舊批次圖片)
+            globalRawData.forEach(doc => {
+                const key = `${doc.name}_${doc.specStr}_${doc.qtyUnit}`;
+                
+                if (!groupedProducts[key]) {
+                    groupedProducts[key] = {
+                        name: doc.name,
+                        specStr: doc.specStr,
+                        qtyUnit: doc.qtyUnit,
+                        imageUrl: doc.imageUrl || "", 
+                        totalStock: 0,
+                        expiries: [],
+                        warningDays: doc.warningDays || 30 // 確保抓到預警天數設定
+                    };
+                }
+                
+                // 圖片網址繼承 (若舊的沒圖、新進的有圖，就套用新圖)
+                if(!groupedProducts[key].imageUrl && doc.imageUrl) {
+                    groupedProducts[key].imageUrl = doc.imageUrl;
+                }
+
+                groupedProducts[key].totalStock += doc.stock;
+                
+                if(doc.stock > 0) {
+                    groupedProducts[key].expiries.push({
+                        docId: doc.id,
+                        dateStr: doc.expDate,
+                        stock: doc.stock
+                    });
+                }
+            });
+
+            // 步驟二：排序 (有庫存在上，無庫存在下)
+            let displayList = Object.values(groupedProducts).sort((a, b) => {
+                if (a.totalStock > 0 && b.totalStock === 0) return -1;
+                if (a.totalStock === 0 && b.totalStock > 0) return 1;
+                return 0;
+            });
+
+            // 步驟三：套用UI篩選器
+            if(currentFilter === 'in-stock') displayList = displayList.filter(p => p.totalStock > 0);
+            else if (currentFilter === 'out-stock') displayList = displayList.filter(p => p.totalStock === 0);
+
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            // 步驟四：產生 HTML
+            displayList.forEach(product => {
+                let expString = '';
+                let statusHtml = '<span class="status-gray">無庫存</span>';
+                let actionHtml = isAdmin ? `<span style="color:#aaa;">無庫存可扣</span>` : '';
+                let rowClass = product.totalStock === 0 ? 'row-empty' : '';
+
+                if (product.totalStock > 0) {
+                    const expDetails = product.expiries.map(exp => {
+                        const d = new Date(exp.dateStr);
+                        const mmdd = `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
+                        return `${mmdd}(${exp.stock})`;
+                    });
+                    expString = expDetails.join(', ');
+
+                    // 依照最早到期批次判定燈號
+                    const earliestExp = product.expiries[0];
+                    const expDateObj = new Date(earliestExp.dateStr);
+                    const daysLeft = Math.ceil((expDateObj.getTime() - today.getTime()) / (1000 * 3600 * 24));
+
+                    if (daysLeft < 0) statusHtml = '🔴 <span class="status-red">已過期</span>';
+                    else if (daysLeft <= product.warningDays) statusHtml = `🟡 <span class="status-yellow">最快剩 ${daysLeft} 天</span>`;
+                    else statusHtml = '🟢 <span class="status-green">正常</span>';
+
+                    if (isAdmin) {
+                        actionHtml = `<button class="btn-action" onclick="window.deductStock('${earliestExp.docId}', ${earliestExp.stock})">扣除 1 ${product.qtyUnit}</button>`;
+                    }
+                }
+
+                // 處理圖片 UI
+                const imgHtml = product.imageUrl 
+                    ? `<a href="${product.imageUrl}" target="_blank"><img src="${product.imageUrl}" class="med-img"></a>` 
+                    : `<div style="width:55px; height:55px; background:#eee; color:#aaa; display:flex; align-items:center; justify-content:center; border-radius:4px; font-size:12px; border: 1px solid #ddd; box-sizing:border-box;">無圖</div>`;
+
+                const row = `
+                    <tr class="${rowClass}">
+                        <td>${imgHtml}</td>
+                        <td style="font-weight:bold; font-size:16px;">${product.name}</td>
+                        <td><span class="spec-tag">${product.specStr}</span></td>
+                        <td style="font-size:18px; font-weight:bold;">${product.totalStock} <span style="font-size:14px;font-weight:normal">${product.qtyUnit}</span></td>
+                        <td>${expString || '-'}</td>
+                        <td>${statusHtml}</td>
+                        <td class="admin-only">${actionHtml}</td>
+                    </tr>
+                `;
+                tbody.innerHTML += row;
+            });
+        }
+
+        // 庫存扣除全域函式
+        window.deductStock = async function(docId, currentStock) {
+            if(confirm('確定要消耗 1 件庫存嗎？(系統將優先扣除最早到期的批次)')) {
+                const newStock = currentStock - 1;
+                await updateDoc(doc(db, "inventory", docId), { stock: newStock });
+            }
+        }
+    </script>
+</body>
+</html>
