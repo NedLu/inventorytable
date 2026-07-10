@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>藥品庫存紀錄表</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; max-width: 800px; margin: auto; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, select { padding: 8px; width: 100%; box-sizing: border-box; }
+        .inline-group { display: flex; gap: 10px; }
+        .inline-group input { flex: 2; }
+        .inline-group select { flex: 1; }
+        button { background-color: #4CAF50; color: white; padding: 10px 15px; border: none; cursor: pointer; width: 100%; font-size: 16px; font-weight: bold; margin-bottom: 20px;}
+        button:hover { background-color: #45a049; }
+        
+        /* 表格樣式 */
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .btn-delete { background-color: #f44336; padding: 5px 10px; width: auto; font-size: 14px; }
+        .btn-delete:hover { background-color: #da190b; }
+        .status-green { color: green; font-weight: bold; }
+        .status-yellow { color: #d4a017; font-weight: bold; }
+        .status-red { color: red; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <h2>📦 新增藥品庫存</h2>
+    <div id="inventory-form">
+        <div class="form-group">
+            <label for="med-name">藥品名稱：</label>
+            <input type="text" id="med-name" placeholder="例如：普拿疼" required>
+        </div>
+        <div class="form-group">
+            <label for="total-qty">總數量：</label>
+            <div class="inline-group">
+                <input type="number" id="total-qty" min="0" placeholder="例如：50" required>
+                <select id="qty-unit">
+                    <option value="顆">顆</option>
+                    <option value="瓶">瓶</option>
+                    <option value="包">包</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="capacity">單件容量：</label>
+            <div class="inline-group">
+                <input type="number" id="capacity" min="0" placeholder="例如：500" required>
+                <select id="capacity-unit">
+                    <option value="mg">mg</option>
+                    <option value="ml">ml</option>
+                    <option value="g">g</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="exp-date">有效期限 (EXP)：</label>
+            <input type="date" id="exp-date" required>
+        </div>
+        <div class="form-group">
+            <label for="warning-days">預警天數 (到期前幾天通知)：</label>
+            <input type="number" id="warning-days" min="1" value="30" required>
+        </div>
+        <button onclick="addMedicine()">新增並加入 Google 行事曆 🗓️</button>
+    </div>
+
+    <hr>
+
+    <h2>📋 庫存清單與狀態總覽</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>藥品名稱</th>
+                <th>總數量</th>
+                <th>單件容量</th>
+                <th>有效期限</th>
+                <th>狀態</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody id="inventory-list">
+            </tbody>
+    </table>
+
+    <script>
+        // 網頁載入時，自動讀取 LocalStorage 的資料並顯示
+        window.onload = function() {
+            renderTable();
+        };
+
+        function addMedicine() {
+            // 1. 取得表單資料
+            const name = document.getElementById('med-name').value;
+            const qty = document.getElementById('total-qty').value;
+            const qtyUnit = document.getElementById('qty-unit').value;
+            const cap = document.getElementById('capacity').value;
+            const capUnit = document.getElementById('capacity-unit').value;
+            const expDate = document.getElementById('exp-date').value;
+            const warningDays = document.getElementById('warning-days').value;
+
+            if(!name || !qty || !cap || !expDate) {
+                alert("請填寫所有必填欄位！");
+                return;
+            }
+
+            // 2. 儲存資料到 LocalStorage
+            const newMedicine = {
+                id: Date.now(), // 產生唯一識別碼
+                name: name,
+                qty: `${qty} ${qtyUnit}`,
+                cap: `${cap} ${capUnit}`,
+                expDate: expDate,
+                warningDays: parseInt(warningDays)
+            };
+
+            let inventory = JSON.parse(localStorage.getItem('medInventory')) || [];
+            inventory.push(newMedicine);
+            localStorage.setItem('medInventory', JSON.stringify(inventory));
+
+            // 3. 處理 Google 行事曆連結 (與第一版邏輯相同)
+            const expirationDate = new Date(expDate);
+            const notifyDate = new Date(expirationDate);
+            notifyDate.setDate(notifyDate.getDate() - parseInt(warningDays));
+
+            const formatEventDate = (date) => date.toISOString().split('T')[0].replace(/-/g, '');
+            const eventDateStr = formatEventDate(notifyDate) + '/' + formatEventDate(notifyDate);
+
+            const myWebsiteUrl = "https://你的github帳號.github.io/Medication-Inventory/"; 
+            const details = `【藥品到期預警】\n\n剩餘總數量：${qty} ${qtyUnit}\n單件容量：${cap} ${capUnit}\n實際有效期限：${expDate}\n\n💡 提醒：若此藥品已提前食用完畢，請直接忽略或刪除此通知！\n🔗 點此回到庫存總表更新最新狀態：${myWebsiteUrl}`;
+
+            const baseUrl = "https://calendar.google.com/calendar/render?action=TEMPLATE";
+            const title = encodeURIComponent(`[藥品到期] ${name} (剩 ${warningDays} 天)`);
+            const detailsEncoded = encodeURIComponent(details);
+            const finalUrl = `${baseUrl}&text=${title}&dates=${eventDateStr}&details=${detailsEncoded}`;
+
+            // 開啟行事曆並更新表格
+            window.open(finalUrl, '_blank');
+            renderTable();
+            
+            // 清空表單
+            document.getElementById('med-name').value = '';
+            document.getElementById('total-qty').value = '';
+            document.getElementById('capacity').value = '';
+            document.getElementById('exp-date').value = '';
+        }
+
+        // 渲染表格資料
+        function renderTable() {
+            const inventory = JSON.parse(localStorage.getItem('medInventory')) || [];
+            const tbody = document.getElementById('inventory-list');
+            tbody.innerHTML = ''; // 清空現有表格
+
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            inventory.forEach(med => {
+                const expDate = new Date(med.expDate);
+                const timeDiff = expDate.getTime() - today.getTime();
+                const daysLeft = Math.ceil(timeDiff / (1000 * 3600 * 24));
+
+                // 判斷狀態燈號
+                let statusHtml = '';
+                if (daysLeft < 0) {
+                    statusHtml = '🔴 <span class="status-red">已過期</span>';
+                } else if (daysLeft <= med.warningDays) {
+                    statusHtml = `🟡 <span class="status-yellow">剩餘 ${daysLeft} 天</span>`;
+                } else {
+                    statusHtml = '🟢 <span class="status-green">正常</span>';
+                }
+
+                // 建立表格列
+                const row = `
+                    <tr>
+                        <td>${med.name}</td>
+                        <td>${med.qty}</td>
+                        <td>${med.cap}</td>
+                        <td>${med.expDate}</td>
+                        <td>${statusHtml}</td>
+                        <td><button class="btn-delete" onclick="deleteMedicine(${med.id})">吃完/刪除</button></td>
+                    </tr>
+                `;
+                tbody.innerHTML += row;
+            });
+        }
+
+        // 刪除特定藥品
+        function deleteMedicine(id) {
+            if(confirm('確定要將此藥品從清單移除嗎？')) {
+                let inventory = JSON.parse(localStorage.getItem('medInventory')) || [];
+                inventory = inventory.filter(med => med.id !== id);
+                localStorage.setItem('medInventory', JSON.stringify(inventory));
+                renderTable(); // 重新整理表格
+            }
+        }
+    </script>
+</body>
+</html>
