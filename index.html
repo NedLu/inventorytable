@@ -63,7 +63,7 @@
             <h2>📦 新增藥品庫存</h2>
             
             <div class="form-group">
-                <label>藥品圖片 (選填)：</label>
+                <label>藥品圖片 (選填，免儲存空間)：</label>
                 <input type="file" id="med-image" accept="image/*">
             </div>
 
@@ -145,13 +145,12 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
         import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
         import { getFirestore, collection, addDoc, updateDoc, doc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
-        import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-storage.js";
 
         // ==========================================
         // 🚨 系統核心變數 (請修改為你自己的設定) 🚨
         const ADMIN_EMAIL = "w28486017@gmail.com";
-        // 補回專屬網址變數
         const myWebsiteUrl = "https://nedlu.github.io/inventorytable/";
+        
         
         const firebaseConfig = {
             apiKey: "AIzaSyAQhvnr9GJsuJeN-STlvMaEvvQafyp45Dw",
@@ -166,7 +165,6 @@
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
-        const storage = getStorage(app); 
 
         let isAdmin = false;
         let currentFilter = 'all'; 
@@ -207,7 +205,7 @@
             });
         });
 
-        // 新增資料事件 (含圖片壓縮邏輯)
+        // 新增資料事件 (方案 B：前端壓縮並直接轉 Base64 文字)
         document.getElementById('btn-add').addEventListener('click', async () => {
             const name = document.getElementById('med-name').value.trim();
             const addQty = parseInt(document.getElementById('add-qty').value);
@@ -223,14 +221,14 @@
 
             const btnAdd = document.getElementById('btn-add');
             btnAdd.disabled = true;
-            btnAdd.innerText = "資料與圖片處理中，請稍候...";
+            btnAdd.innerText = "資料與圖片壓縮轉碼中...";
 
             try {
-                let imageUrl = "";
+                let imageUrl = ""; // 這裡會用來儲存 Base64 字串
                 
-                // 圖片壓縮與上傳模組
+                // 圖片壓縮與 Base64 轉換模組
                 if (imageFile) {
-                    const compressedFile = await new Promise((resolve) => {
+                    imageUrl = await new Promise((resolve) => {
                         const reader = new FileReader();
                         reader.readAsDataURL(imageFile);
                         reader.onload = (event) => {
@@ -238,9 +236,8 @@
                             img.src = event.target.result;
                             img.onload = () => {
                                 const canvas = document.createElement('canvas');
-                                const MAX_WIDTH = 800; // 壓縮最大寬度設定
+                                const MAX_WIDTH = 600; // 調整為 600 寬度，更省雲端資料庫空間
                                 
-                                // 防止小圖被放大破壞畫質
                                 let targetWidth = img.width;
                                 let targetHeight = img.height;
                                 if (img.width > MAX_WIDTH) {
@@ -253,33 +250,24 @@
                                 const ctx = canvas.getContext('2d');
                                 ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
                                 
-                                // 轉換為壓縮後的 Blob 檔案，品質 0.7
-                                canvas.toBlob((blob) => {
-                                    resolve(new File([blob], imageFile.name, {
-                                        type: 'image/jpeg',
-                                        lastModified: Date.now()
-                                    }));
-                                }, 'image/jpeg', 0.7);
+                                // 直接輸出為壓縮後的 Base64 DataURL (品質 0.6)
+                                const base64Result = canvas.toDataURL('image/jpeg', 0.6);
+                                resolve(base64Result);
                             };
                         };
                     });
-
-                    // 執行 Storage 上傳
-                    const imageRef = ref(storage, `med_images/${Date.now()}_${compressedFile.name}`);
-                    await uploadBytes(imageRef, compressedFile);
-                    imageUrl = await getDownloadURL(imageRef);
                 }
 
-                // 資料庫組合寫入
                 const specString = `${packQty} * ${capacity}${capUnit}`;
 
+                // 直接把長長的 Base64 字串存入 Firestore text 欄位
                 await addDoc(collection(db, "inventory"), {
                     name: name,
                     specStr: specString,
                     qtyUnit: qtyUnit,
                     expDate: expDate,
                     stock: addQty, 
-                    imageUrl: imageUrl, 
+                    imageUrl: imageUrl, // 這裏現在是純文字，不需經由 Storage
                     warningDays: parseInt(warningDays),
                     createdAt: new Date()
                 });
@@ -311,7 +299,7 @@
                 
             } catch (e) { 
                 console.error(e);
-                alert("新增失敗，請檢查網路連線或 Storage 權限設定。"); 
+                alert("新增失敗，請檢查網路連線。"); 
             } finally {
                 btnAdd.disabled = false;
                 btnAdd.innerText = "新增批次庫存並加入行事曆 🗓️";
@@ -331,7 +319,6 @@
                     nameSet.add(data.name);
                 });
 
-                // 更新下拉歷史清單
                 const dataList = document.getElementById('med-history-list');
                 dataList.innerHTML = '';
                 nameSet.forEach(name => {
@@ -349,7 +336,6 @@
 
             const groupedProducts = {};
 
-            // 步驟一：依據複合鍵歸類 (繼承舊批次圖片)
             globalRawData.forEach(doc => {
                 const key = `${doc.name}_${doc.specStr}_${doc.qtyUnit}`;
                 
@@ -361,11 +347,10 @@
                         imageUrl: doc.imageUrl || "", 
                         totalStock: 0,
                         expiries: [],
-                        warningDays: doc.warningDays || 30 // 確保抓到預警天數設定
+                        warningDays: doc.warningDays || 30
                     };
                 }
                 
-                // 圖片網址繼承 (若舊的沒圖、新進的有圖，就套用新圖)
                 if(!groupedProducts[key].imageUrl && doc.imageUrl) {
                     groupedProducts[key].imageUrl = doc.imageUrl;
                 }
@@ -381,21 +366,18 @@
                 }
             });
 
-            // 步驟二：排序 (有庫存在上，無庫存在下)
             let displayList = Object.values(groupedProducts).sort((a, b) => {
                 if (a.totalStock > 0 && b.totalStock === 0) return -1;
                 if (a.totalStock === 0 && b.totalStock > 0) return 1;
                 return 0;
             });
 
-            // 步驟三：套用UI篩選器
             if(currentFilter === 'in-stock') displayList = displayList.filter(p => p.totalStock > 0);
             else if (currentFilter === 'out-stock') displayList = displayList.filter(p => p.totalStock === 0);
 
             const today = new Date();
             today.setHours(0, 0, 0, 0);
 
-            // 步驟四：產生 HTML
             displayList.forEach(product => {
                 let expString = '';
                 let statusHtml = '<span class="status-gray">無庫存</span>';
@@ -410,7 +392,6 @@
                     });
                     expString = expDetails.join(', ');
 
-                    // 依照最早到期批次判定燈號
                     const earliestExp = product.expiries[0];
                     const expDateObj = new Date(earliestExp.dateStr);
                     const daysLeft = Math.ceil((expDateObj.getTime() - today.getTime()) / (1000 * 3600 * 24));
@@ -424,9 +405,9 @@
                     }
                 }
 
-                // 處理圖片 UI
+                // 圖片顯示邏輯：Base64 字串可以直接放入 img src 中完美顯示
                 const imgHtml = product.imageUrl 
-                    ? `<a href="${product.imageUrl}" target="_blank"><img src="${product.imageUrl}" class="med-img"></a>` 
+                    ? `<img src="${product.imageUrl}" class="med-img">` 
                     : `<div style="width:55px; height:55px; background:#eee; color:#aaa; display:flex; align-items:center; justify-content:center; border-radius:4px; font-size:12px; border: 1px solid #ddd; box-sizing:border-box;">無圖</div>`;
 
                 const row = `
@@ -444,7 +425,6 @@
             });
         }
 
-        // 庫存扣除全域函式
         window.deductStock = async function(docId, currentStock) {
             if(confirm('確定要消耗 1 件庫存嗎？(系統將優先扣除最早到期的批次)')) {
                 const newStock = currentStock - 1;
