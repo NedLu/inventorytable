@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>雲端藥品庫存紀錄表</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; max-width: 800px; margin: auto; background-color: #f9f9f9;}
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; max-width: 900px; margin: auto; background-color: #f9f9f9;}
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
         .form-group { margin-bottom: 15px; }
         label { display: block; margin-bottom: 5px; font-weight: bold; }
@@ -13,77 +13,76 @@
         .inline-group { display: flex; gap: 10px; }
         .inline-group input { flex: 2; }
         .inline-group select { flex: 1; }
-        button { background-color: #4CAF50; color: white; padding: 10px 15px; border: none; cursor: pointer; width: 100%; font-size: 16px; font-weight: bold; border-radius: 4px; }
+        button { background-color: #4CAF50; color: white; padding: 10px 15px; border: none; cursor: pointer; border-radius: 4px; font-weight: bold;}
         button:hover { background-color: #45a049; }
-        .btn-secondary { background-color: #666; margin-top: 10px; }
+        .btn-full { width: 100%; font-size: 16px; margin-top: 10px; }
+        .btn-secondary { background-color: #666; }
         .btn-secondary:hover { background-color: #555; }
         
+        /* 篩選按鈕區 */
+        .filter-bar { display: flex; gap: 10px; margin-bottom: 15px; }
+        .filter-btn { flex: 1; background-color: #e0e0e0; color: #333; }
+        .filter-btn.active { background-color: #2196F3; color: white; }
+
         /* 表格樣式 */
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px;}
+        table { width: 100%; border-collapse: collapse; font-size: 14px;}
         th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
         th { background-color: #f2f2f2; }
-        .btn-delete { background-color: #f44336; padding: 5px 10px; width: auto; font-size: 13px; margin: 0;}
-        .btn-delete:hover { background-color: #da190b; }
+        .btn-action { background-color: #ff9800; padding: 5px 10px; width: auto; font-size: 13px; margin: 0; color:white;}
+        .btn-action:hover { background-color: #e68a00; }
         .status-green { color: green; font-weight: bold; }
         .status-yellow { color: #d4a017; font-weight: bold; }
         .status-red { color: red; font-weight: bold; }
+        .status-gray { color: gray; font-weight: bold; }
+        .row-empty { background-color: #f5f5f5; color: #888; }
 
-        /* 區塊隱藏控制 */
         #app-section, #admin-section { display: none; }
         .header-bar { display: flex; justify-content: space-between; align-items: center; }
-        .user-info { font-size: 14px; color: #555; }
     </style>
 </head>
 <body>
 
     <div id="login-section" class="card">
         <h2>🔒 系統登入</h2>
-        <div class="form-group">
-            <label>電子郵件：</label>
-            <input type="email" id="login-email" placeholder="輸入您的信箱">
-        </div>
-        <div class="form-group">
-            <label>密碼：</label>
-            <input type="password" id="login-password" placeholder="輸入您的密碼">
-        </div>
-        <button id="btn-login">登入</button>
-        <p id="login-error" style="color: red; font-size: 14px; display: none;">登入失敗，請檢查帳號密碼。</p>
+        <div class="form-group"><label>信箱：</label><input type="email" id="login-email"></div>
+        <div class="form-group"><label>密碼：</label><input type="password" id="login-password"></div>
+        <button id="btn-login" class="btn-full">登入</button>
     </div>
 
     <div id="app-section">
         <div class="header-bar card">
             <div class="user-info">
                 目前登入：<span id="current-user"></span> 
-                <span id="role-badge" style="margin-left: 10px; padding: 3px 8px; border-radius: 12px; font-size: 12px; background: #eee;"></span>
+                <span id="role-badge" style="margin-left: 10px; padding: 3px 8px; border-radius: 12px; font-size: 12px;"></span>
             </div>
-            <button id="btn-logout" class="btn-secondary" style="width: auto; padding: 5px 15px;">登出</button>
+            <button id="btn-logout" class="btn-secondary" style="padding: 5px 15px;">登出</button>
         </div>
 
         <div id="admin-section" class="card">
             <h2>📦 新增藥品庫存</h2>
             <div class="form-group">
                 <label>藥品名稱：</label>
-                <input type="text" id="med-name" placeholder="例如：普拿疼">
+                <input type="text" id="med-name" list="med-history-list" placeholder="輸入或選擇曾新增的品項">
+                <datalist id="med-history-list"></datalist>
             </div>
             <div class="form-group">
-                <label>總數量：</label>
+                <label>入庫數量：</label>
                 <div class="inline-group">
-                    <input type="number" id="total-qty" min="0" placeholder="例如：50">
+                    <input type="number" id="add-qty" min="1" value="1" placeholder="新增多少件">
                     <select id="qty-unit">
                         <option value="顆">顆</option>
+                        <option value="盒">盒</option>
                         <option value="瓶">瓶</option>
-                        <option value="包">包</option>
                     </select>
                 </div>
             </div>
             <div class="form-group">
-                <label>單件容量：</label>
+                <label>單件容量 (綁定品項基準)：</label>
                 <div class="inline-group">
                     <input type="number" id="capacity" min="0" placeholder="例如：500">
                     <select id="capacity-unit">
                         <option value="mg">mg</option>
                         <option value="ml">ml</option>
-                        <option value="g">g</option>
                     </select>
                 </div>
             </div>
@@ -95,19 +94,25 @@
                 <label>預警天數 (到期前幾天通知)：</label>
                 <input type="number" id="warning-days" min="1" value="30">
             </div>
-            <button id="btn-add">新增並加入 Google 行事曆 🗓️</button>
+            <button id="btn-add" class="btn-full">新增批次庫存並加入行事曆 🗓️</button>
         </div>
 
         <div class="card">
             <h2>📋 雲端庫存總覽</h2>
+            
+            <div class="filter-bar">
+                <button class="filter-btn active" data-filter="all">顯示全部</button>
+                <button class="filter-btn" data-filter="in-stock">顯示有庫存</button>
+                <button class="filter-btn" data-filter="out-stock">顯示無庫存</button>
+            </div>
+
             <table>
                 <thead>
                     <tr>
-                        <th>藥品名稱</th>
+                        <th>藥品品項 (容量)</th>
                         <th>總數量</th>
-                        <th>單件容量</th>
-                        <th>有效期限</th>
-                        <th>狀態</th>
+                        <th>有效期限 (數量)</th>
+                        <th>近期狀態</th>
                         <th class="admin-only">操作</th>
                     </tr>
                 </thead>
@@ -120,107 +125,92 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
         import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
-        import { getFirestore, collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, updateDoc, doc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
 
         // ==========================================
-        // 🚨 請在這裡填寫你的「管理員信箱」🚨
-        // 只有這個信箱登入時，才能看到「新增」與「刪除」按鈕
+        const ADMIN_EMAIL = "w28486017@gmail.com";
+        // 補回專屬網址變數
+        const myWebsiteUrl = "https://nedlu.github.io/inventorytable/";
         // ==========================================
-        const ADMIN_EMAIL = "w28486017@gmail.com"; 
         
         // 未來上架 GitHub Pages 後，可以把下方的網址換成你的專屬網址
-        const myWebsiteUrl = "https://nedlu.github.io/inventorytable/";
+        
 
-        // Firebase 初始化 (你的金鑰)
+        
         const firebaseConfig = {
             apiKey: "AIzaSyAQhvnr9GJsuJeN-STlvMaEvvQafyp45Dw",
             authDomain: "medication-inventory-abc95.firebaseapp.com",
             projectId: "medication-inventory-abc95",
             storageBucket: "medication-inventory-abc95.firebasestorage.app",
             messagingSenderId: "893458734405",
-            appId: "1:893458734405:web:dba2c5f53282d0cc1f322c",
-            measurementId: "G-J7KGD34N54"
+            appId: "1:893458734405:web:dba2c5f53282d0cc1f322c"
         };
+        
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        // UI 元素
-        const loginSec = document.getElementById('login-section');
-        const appSec = document.getElementById('app-section');
-        const adminSec = document.getElementById('admin-section');
         let isAdmin = false;
+        let currentFilter = 'all'; 
+        let globalRawData = []; 
 
-        // 監聽登入狀態
         onAuthStateChanged(auth, (user) => {
             if (user) {
-                // 已登入
-                loginSec.style.display = 'none';
-                appSec.style.display = 'block';
+                document.getElementById('login-section').style.display = 'none';
+                document.getElementById('app-section').style.display = 'block';
                 document.getElementById('current-user').innerText = user.email;
                 
-                // 權限判斷
                 isAdmin = (user.email === ADMIN_EMAIL);
-                if(isAdmin) {
-                    adminSec.style.display = 'block';
-                    document.getElementById('role-badge').innerText = '👑 管理員';
-                    document.getElementById('role-badge').style.background = '#ffd700';
-                    document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'table-cell');
-                } else {
-                    adminSec.style.display = 'none';
-                    document.getElementById('role-badge').innerText = '👀 檢視者';
-                    document.getElementById('role-badge').style.background = '#eee';
-                    document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'none');
-                }
-
-                // 載入即時資料庫
+                document.getElementById('admin-section').style.display = isAdmin ? 'block' : 'none';
+                document.querySelectorAll('.admin-only').forEach(el => el.style.display = isAdmin ? 'table-cell' : 'none');
+                
                 loadInventory();
             } else {
-                // 未登入
-                loginSec.style.display = 'block';
-                appSec.style.display = 'none';
+                document.getElementById('login-section').style.display = 'block';
+                document.getElementById('app-section').style.display = 'none';
             }
         });
 
-        // 登入按鈕事件
         document.getElementById('btn-login').addEventListener('click', () => {
-            const email = document.getElementById('login-email').value;
-            const password = document.getElementById('login-password').value;
-            signInWithEmailAndPassword(auth, email, password)
-                .catch((error) => {
-                    document.getElementById('login-error').style.display = 'block';
-                });
+            signInWithEmailAndPassword(auth, document.getElementById('login-email').value, document.getElementById('login-password').value)
+                .catch(e => alert("登入失敗，請檢查帳號密碼"));
+        });
+        document.getElementById('btn-logout').addEventListener('click', () => signOut(auth));
+
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active');
+                currentFilter = e.target.getAttribute('data-filter');
+                renderTable(); 
+            });
         });
 
-        // 登出按鈕事件
-        document.getElementById('btn-logout').addEventListener('click', () => {
-            signOut(auth);
-        });
-
-        // 新增資料事件
+        // 新增資料並加入行事曆
         document.getElementById('btn-add').addEventListener('click', async () => {
-            const name = document.getElementById('med-name').value;
-            const qty = document.getElementById('total-qty').value;
+            const name = document.getElementById('med-name').value.trim();
+            const qty = parseInt(document.getElementById('add-qty').value);
             const qtyUnit = document.getElementById('qty-unit').value;
             const cap = document.getElementById('capacity').value;
             const capUnit = document.getElementById('capacity-unit').value;
             const expDate = document.getElementById('exp-date').value;
+            // 抓取預警天數
             const warningDays = document.getElementById('warning-days').value;
 
-            if(!name || !qty || !cap || !expDate) { alert("請填寫所有必填欄位！"); return; }
+            if(!name || !qty || !cap || !expDate) { alert("請填寫完整！"); return; }
 
             try {
-                // 寫入 Firestore 雲端資料庫
+                // 1. 寫入 Firestore
                 await addDoc(collection(db, "inventory"), {
                     name: name,
-                    qty: `${qty} ${qtyUnit}`,
-                    cap: `${cap} ${capUnit}`,
+                    qtyUnit: qtyUnit,
+                    capStr: `${cap}${capUnit}`, 
                     expDate: expDate,
-                    warningDays: parseInt(warningDays),
+                    stock: qty, 
                     createdAt: new Date()
                 });
-
-                // 產生 Google 行事曆連結
+                
+                // 2. 補回：產生 Google 行事曆連結
                 const expirationDate = new Date(expDate);
                 const notifyDate = new Date(expirationDate);
                 notifyDate.setDate(notifyDate.getDate() - parseInt(warningDays));
@@ -228,81 +218,141 @@
                 const formatEventDate = (date) => date.toISOString().split('T')[0].replace(/-/g, '');
                 const eventDateStr = formatEventDate(notifyDate) + '/' + formatEventDate(notifyDate);
 
-                const details = `【藥品到期預警】\n\n剩餘總數量：${qty} ${qtyUnit}\n單件容量：${cap} ${capUnit}\n實際有效期限：${expDate}\n\n💡 提醒：若此藥品已提前食用完畢，請直接忽略或刪除此通知！\n🔗 點此回到庫存總表更新最新狀態：${myWebsiteUrl}`;
+                const details = `【藥品到期預警】\n\n本次新增數量：${qty} ${qtyUnit}\n單件容量：${cap} ${capUnit}\n實際有效期限：${expDate}\n\n💡 提醒：若此批藥品已提前食用完畢，請直接忽略或刪除此通知！\n🔗 點此回到庫存總表更新最新狀態：${myWebsiteUrl}`;
                 
                 const baseUrl = "https://calendar.google.com/calendar/render?action=TEMPLATE";
                 const title = encodeURIComponent(`[藥品到期] ${name} (剩 ${warningDays} 天)`);
                 const detailsEncoded = encodeURIComponent(details);
                 const finalUrl = `${baseUrl}&text=${title}&dates=${eventDateStr}&details=${detailsEncoded}`;
 
+                // 彈出 Google 行事曆
                 window.open(finalUrl, '_blank');
 
-                // 清空表單
+                // 清空表單以便下一次輸入
                 document.getElementById('med-name').value = '';
-                document.getElementById('total-qty').value = '';
+                document.getElementById('add-qty').value = '1';
                 document.getElementById('capacity').value = '';
                 document.getElementById('exp-date').value = '';
+                
+                alert("已成功寫入雲端並為您開啟行事曆！");
 
-            } catch (e) {
-                console.error("寫入錯誤: ", e);
-                alert("新增失敗，請檢查網路連線。");
+            } catch (e) { 
+                console.error(e);
+                alert("新增失敗，請檢查網路連線。"); 
             }
         });
 
-        // 讀取並渲染表格資料 (即時同步)
         function loadInventory() {
             const q = query(collection(db, "inventory"), orderBy("expDate"));
-            
-            // onSnapshot 會即時監聽雲端資料，其他裝置一更新，這裡馬上變！
             onSnapshot(q, (querySnapshot) => {
-                const tbody = document.getElementById('inventory-list');
-                tbody.innerHTML = ''; 
-
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
+                globalRawData = [];
+                const nameSet = new Set(); 
 
                 querySnapshot.forEach((docSnap) => {
-                    const med = docSnap.data();
-                    const medId = docSnap.id;
-                    const expDate = new Date(med.expDate);
-                    const timeDiff = expDate.getTime() - today.getTime();
-                    const daysLeft = Math.ceil(timeDiff / (1000 * 3600 * 24));
-
-                    let statusHtml = '';
-                    if (daysLeft < 0) {
-                        statusHtml = '🔴 <span class="status-red">已過期</span>';
-                    } else if (daysLeft <= med.warningDays) {
-                        statusHtml = `🟡 <span class="status-yellow">剩餘 ${daysLeft} 天</span>`;
-                    } else {
-                        statusHtml = '🟢 <span class="status-green">正常</span>';
-                    }
-
-                    // 依據權限決定是否顯示刪除按鈕
-                    const deleteBtnHtml = isAdmin ? `<button class="btn-delete" data-id="${medId}">吃完/刪除</button>` : `<span style="color:#aaa;">無權限</span>`;
-
-                    const row = `
-                        <tr>
-                            <td>${med.name}</td>
-                            <td>${med.qty}</td>
-                            <td>${med.cap}</td>
-                            <td>${med.expDate}</td>
-                            <td>${statusHtml}</td>
-                            <td class="admin-only">${deleteBtnHtml}</td>
-                        </tr>
-                    `;
-                    tbody.innerHTML += row;
+                    const data = docSnap.data();
+                    globalRawData.push({ id: docSnap.id, ...data });
+                    nameSet.add(data.name);
                 });
 
-                // 重新綁定刪除按鈕事件
-                document.querySelectorAll('.btn-delete').forEach(btn => {
-                    btn.addEventListener('click', async (e) => {
-                        if(confirm('確定要將此藥品從雲端移除嗎？')) {
-                            const idToDelete = e.target.getAttribute('data-id');
-                            await deleteDoc(doc(db, "inventory", idToDelete));
-                        }
-                    });
+                const dataList = document.getElementById('med-history-list');
+                dataList.innerHTML = '';
+                nameSet.forEach(name => {
+                    dataList.innerHTML += `<option value="${name}">`;
                 });
+
+                renderTable();
             });
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('inventory-list');
+            tbody.innerHTML = ''; 
+
+            const groupedProducts = {};
+
+            globalRawData.forEach(doc => {
+                const key = `${doc.name}_${doc.capStr}_${doc.qtyUnit}`;
+                if (!groupedProducts[key]) {
+                    groupedProducts[key] = {
+                        name: doc.name,
+                        capStr: doc.capStr,
+                        qtyUnit: doc.qtyUnit,
+                        totalStock: 0,
+                        expiries: [] 
+                    };
+                }
+                
+                groupedProducts[key].totalStock += doc.stock;
+                
+                if(doc.stock > 0) {
+                    groupedProducts[key].expiries.push({
+                        docId: doc.id,
+                        dateStr: doc.expDate,
+                        stock: doc.stock
+                    });
+                }
+            });
+
+            let displayList = Object.values(groupedProducts).sort((a, b) => {
+                if (a.totalStock > 0 && b.totalStock === 0) return -1;
+                if (a.totalStock === 0 && b.totalStock > 0) return 1;
+                return 0;
+            });
+
+            if(currentFilter === 'in-stock') {
+                displayList = displayList.filter(p => p.totalStock > 0);
+            } else if (currentFilter === 'out-stock') {
+                displayList = displayList.filter(p => p.totalStock === 0);
+            }
+
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            displayList.forEach(product => {
+                let expString = '';
+                let statusHtml = '<span class="status-gray">無庫存</span>';
+                let actionHtml = isAdmin ? `<span style="color:#aaa;">無庫存可扣</span>` : '';
+                let rowClass = product.totalStock === 0 ? 'row-empty' : '';
+
+                if (product.totalStock > 0) {
+                    const expDetails = product.expiries.map(exp => {
+                        const d = new Date(exp.dateStr);
+                        const mmdd = `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
+                        return `${mmdd}(${exp.stock})`;
+                    });
+                    expString = expDetails.join(', ');
+
+                    const earliestExp = product.expiries[0];
+                    const expDateObj = new Date(earliestExp.dateStr);
+                    const daysLeft = Math.ceil((expDateObj.getTime() - today.getTime()) / (1000 * 3600 * 24));
+
+                    if (daysLeft < 0) statusHtml = '🔴 <span class="status-red">已過期</span>';
+                    else if (daysLeft <= 30) statusHtml = `🟡 <span class="status-yellow">最快剩 ${daysLeft} 天</span>`;
+                    else statusHtml = '🟢 <span class="status-green">正常</span>';
+
+                    if (isAdmin) {
+                        actionHtml = `<button class="btn-action" onclick="window.deductStock('${earliestExp.docId}', ${earliestExp.stock})">扣除 1 ${product.qtyUnit}</button>`;
+                    }
+                }
+
+                const row = `
+                    <tr class="${rowClass}">
+                        <td><strong>${product.name}</strong><br><small style="color:#666;">${product.capStr}</small></td>
+                        <td style="font-size:18px; font-weight:bold;">${product.totalStock} <span style="font-size:14px;font-weight:normal">${product.qtyUnit}</span></td>
+                        <td>${expString || '-'}</td>
+                        <td>${statusHtml}</td>
+                        <td class="admin-only">${actionHtml}</td>
+                    </tr>
+                `;
+                tbody.innerHTML += row;
+            });
+        }
+
+        window.deductStock = async function(docId, currentStock) {
+            if(confirm('確定要消耗 1 件庫存嗎？(將優先扣除最早到期的批次)')) {
+                const newStock = currentStock - 1;
+                await updateDoc(doc(db, "inventory", docId), { stock: newStock });
+            }
         }
     </script>
 </body>
