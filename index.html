@@ -45,8 +45,8 @@
 
     <div id="login-section" class="card">
         <h2>🔒 系統登入</h2>
-        <div class="form-group"><label>信箱：</label><input type="email" id="login-email"></div>
-        <div class="form-group"><label>密碼：</label><input type="password" id="login-password"></div>
+        <div class="form-group"><label for="login-email">信箱：</label><input type="email" id="login-email"></div>
+        <div class="form-group"><label for="login-password">密碼：</label><input type="password" id="login-password"></div>
         <button id="btn-login" class="btn-full">登入</button>
     </div>
 
@@ -63,20 +63,21 @@
             <h2>📦 新增藥品庫存</h2>
             
             <div class="form-group">
-                <label>藥品圖片 (選填，免儲存空間)：</label>
+                <label for="med-image">藥品圖片 (選填，免儲存空間)：</label>
                 <input type="file" id="med-image" accept="image/*">
+                <img id="edit-image-preview" style="display:none; width:55px; height:55px; object-fit:cover; border-radius:4px; margin-top:6px; border:1px solid #ddd;">
             </div>
 
             <div class="form-group">
-                <label>藥品名稱：</label>
+                <label for="med-name">藥品名稱：</label>
                 <input type="text" id="med-name" list="med-history-list" placeholder="例如：普拿疼">
                 <datalist id="med-history-list"></datalist>
             </div>
-            
+
             <hr style="border: 0; border-top: 1px dashed #ccc; margin: 15px 0;">
-            
+
             <div class="form-group">
-                <label>包裝規格 (單盒內容物)：</label>
+                <label for="pack-qty">包裝規格 (單盒內容物)：</label>
                 <div class="inline-group">
                     <input type="number" id="pack-qty" min="1" placeholder="藥物錠數 (例如: 10)">
                     <span>錠/支 ×</span>
@@ -90,7 +91,7 @@
             </div>
 
             <div class="form-group">
-                <label>庫存入庫 (外包裝總量)：</label>
+                <label for="add-qty" id="label-add-qty">庫存入庫 (外包裝總量)：</label>
                 <div class="inline-group">
                     <input type="number" id="add-qty" min="1" value="1" placeholder="新增幾盒/箱">
                     <select id="qty-unit">
@@ -101,18 +102,19 @@
                     </select>
                 </div>
             </div>
-            
+
             <hr style="border: 0; border-top: 1px dashed #ccc; margin: 15px 0;">
 
             <div class="form-group">
-                <label>有效期限 (EXP)：</label>
+                <label for="exp-date">有效期限 (EXP)：</label>
                 <input type="date" id="exp-date">
             </div>
             <div class="form-group">
-                <label>預警天數 (到期前幾天通知)：</label>
+                <label for="warning-days">預警天數 (到期前幾天通知)：</label>
                 <input type="number" id="warning-days" min="1" value="30">
             </div>
             <button id="btn-add" class="btn-full">新增批次庫存並加入行事曆 🗓️</button>
+            <button id="btn-cancel-edit" class="btn-full btn-secondary" style="display:none; margin-top:8px;">取消編輯</button>
         </div>
 
         <div class="card">
@@ -136,6 +138,7 @@
                     </tr>
                 </thead>
                 <tbody id="inventory-list">
+                        <tr><td colspan="7" style="text-align:center; color:#888; padding:20px;">載入中...</td></tr>
                     </tbody>
             </table>
         </div>
@@ -144,14 +147,16 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
         import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
-        import { getFirestore, collection, addDoc, updateDoc, doc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+        import { getFirestore, collection, doc, getDoc, onSnapshot, query, orderBy, increment, writeBatch } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+
+        // ⚠️ 前端的 isAdmin 判斷只能隱藏/顯示 UI，無法阻擋惡意使用者直接呼叫 Firestore API。
+        // 管理員身分改用 admins/{uid} 集合判斷（不再寫死信箱），務必在 Firebase Console
+        // 的 Firestore Rules 貼上對應規則，完整規則見對話回覆內容。
 
         // ==========================================
         // 🚨 系統核心變數 (請修改為你自己的設定) 🚨
-        const ADMIN_EMAIL = "w28486017@gmail.com";
-        const myWebsiteUrl = "https://nedlu.github.io/inventorytable/";
-        
-        
+        const myWebsiteUrl = "https://你的github帳號.github.io/Medication-Inventory/";
+
         const firebaseConfig = {
             apiKey: "AIzaSyAQhvnr9GJsuJeN-STlvMaEvvQafyp45Dw",
             authDomain: "medication-inventory-abc95.firebaseapp.com",
@@ -161,30 +166,49 @@
             appId: "1:893458734405:web:dba2c5f53282d0cc1f322c"
         };
         // ==========================================
-        
+
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
 
         let isAdmin = false;
-        let currentFilter = 'all'; 
-        let globalRawData = []; 
+        let currentFilter = 'all';
+        let globalRawData = [];
+        let editingDocId = null;
+
+        // 圖片延遲載入快取：docId -> base64 DataURL，圖片存在獨立集合 inventoryImages，
+        // 不會被 onSnapshot 即時監聽，避免每次扣庫存/編輯都重複傳輸圖片資料
+        const imageCache = new Map();
 
         // 登入狀態監聽
-        onAuthStateChanged(auth, (user) => {
+        onAuthStateChanged(auth, async (user) => {
             if (user) {
                 document.getElementById('login-section').style.display = 'none';
                 document.getElementById('app-section').style.display = 'block';
                 document.getElementById('current-user').innerText = user.email;
-                
-                isAdmin = (user.email === ADMIN_EMAIL);
+
+                try {
+                    const adminDocSnap = await getDoc(doc(db, 'admins', user.uid));
+                    isAdmin = adminDocSnap.exists();
+                } catch (e) {
+                    console.error('無法確認管理員權限', e);
+                    isAdmin = false;
+                }
+
                 document.getElementById('admin-section').style.display = isAdmin ? 'block' : 'none';
                 document.querySelectorAll('.admin-only').forEach(el => el.style.display = isAdmin ? 'table-cell' : 'none');
-                
+
+                const roleBadge = document.getElementById('role-badge');
+                roleBadge.innerText = isAdmin ? '管理員' : '檢視者';
+                roleBadge.style.backgroundColor = isAdmin ? '#2196F3' : '#e0e0e0';
+                roleBadge.style.color = isAdmin ? '#fff' : '#333';
+
                 loadInventory();
             } else {
                 document.getElementById('login-section').style.display = 'block';
                 document.getElementById('app-section').style.display = 'none';
+                editingDocId = null;
+                imageCache.clear();
             }
         });
 
@@ -201,117 +225,218 @@
                 document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
                 e.target.classList.add('active');
                 currentFilter = e.target.getAttribute('data-filter');
-                renderTable(); 
+                renderTable();
             });
         });
 
-        // 新增資料事件 (方案 B：前端壓縮並直接轉 Base64 文字)
+        // 圖片壓縮為 Base64 DataURL
+        function compressImageToBase64(file, maxWidth = 600, quality = 0.6) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onerror = () => reject(new Error("圖片讀取失敗"));
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.onerror = () => reject(new Error("圖片格式無法解析"));
+                    img.src = event.target.result;
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+
+                        let targetWidth = img.width;
+                        let targetHeight = img.height;
+                        if (img.width > maxWidth) {
+                            targetWidth = maxWidth;
+                            targetHeight = img.height * (maxWidth / img.width);
+                        }
+
+                        canvas.width = targetWidth;
+                        canvas.height = targetHeight;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                        resolve(canvas.toDataURL('image/jpeg', quality));
+                    };
+                };
+            });
+        }
+
+        // 讀取單一批次的圖片（一次性 getDoc + 記憶體快取，不走即時監聽）
+        async function getCachedImage(docId) {
+            if (imageCache.has(docId)) return imageCache.get(docId);
+            try {
+                const snap = await getDoc(doc(db, 'inventoryImages', docId));
+                const data = snap.exists() ? (snap.data().data || '') : '';
+                imageCache.set(docId, data);
+                return data;
+            } catch (e) {
+                console.error('讀取圖片失敗', e);
+                return '';
+            }
+        }
+
+        // 渲染完表格後，對有圖片的品項非同步補上圖片（延遲載入）
+        function loadImagesForRows(docIds) {
+            docIds.forEach(docId => {
+                getCachedImage(docId).then(data => {
+                    if (!data) return;
+                    const slot = document.getElementById(`img-slot-${docId}`);
+                    if (!slot) return; // 該列可能已經被重新渲染掉
+                    slot.outerHTML = `<img id="img-slot-${docId}" src="${data}" class="med-img">`;
+                });
+            });
+        }
+
+        // 切換新增／編輯模式的表單文字與按鈕顯示
+        function updateFormModeUI() {
+            const btnAdd = document.getElementById('btn-add');
+            const btnCancelEdit = document.getElementById('btn-cancel-edit');
+            const addQtyLabel = document.getElementById('label-add-qty');
+            if (editingDocId) {
+                btnAdd.innerText = '更新此批次資料 ✏️';
+                btnCancelEdit.style.display = 'inline-block';
+                addQtyLabel.innerText = '此批次目前庫存數量：';
+            } else {
+                btnAdd.innerText = '新增批次庫存並加入行事曆 🗓️';
+                btnCancelEdit.style.display = 'none';
+                addQtyLabel.innerText = '庫存入庫 (外包裝總量)：';
+            }
+        }
+
+        // 清空新增/編輯表單
+        function resetAddForm() {
+            document.getElementById('med-name').value = '';
+            document.getElementById('add-qty').value = '1';
+            document.getElementById('pack-qty').value = '';
+            document.getElementById('capacity').value = '';
+            document.getElementById('exp-date').value = '';
+            document.getElementById('warning-days').value = '30';
+            document.getElementById('med-image').value = '';
+            const preview = document.getElementById('edit-image-preview');
+            preview.style.display = 'none';
+            preview.src = '';
+        }
+
+        document.getElementById('btn-cancel-edit').addEventListener('click', () => {
+            editingDocId = null;
+            resetAddForm();
+            updateFormModeUI();
+        });
+
+        // 新增／更新資料事件
         document.getElementById('btn-add').addEventListener('click', async () => {
+            const isEditing = !!editingDocId;
+
             const name = document.getElementById('med-name').value.trim();
-            const addQty = parseInt(document.getElementById('add-qty').value);
+            const addQty = parseInt(document.getElementById('add-qty').value, 10);
             const qtyUnit = document.getElementById('qty-unit').value;
-            const packQty = document.getElementById('pack-qty').value; 
-            const capacity = document.getElementById('capacity').value; 
+            const packQty = parseFloat(document.getElementById('pack-qty').value);
+            const capacity = parseFloat(document.getElementById('capacity').value);
             const capUnit = document.getElementById('capacity-unit').value;
             const expDate = document.getElementById('exp-date').value;
-            const warningDays = document.getElementById('warning-days').value;
+            const warningDays = parseInt(document.getElementById('warning-days').value, 10);
             const imageFile = document.getElementById('med-image').files[0];
 
-            if(!name || !addQty || !packQty || !capacity || !expDate) { alert("請填寫所有欄位！"); return; }
+            if (!name) { alert("請輸入藥品名稱！"); return; }
+            if (!Number.isFinite(addQty) || addQty < (isEditing ? 0 : 1)) {
+                alert(isEditing ? "庫存數量請輸入 0 或以上的整數！" : "庫存入庫數量請輸入大於 0 的整數！");
+                return;
+            }
+            if (!Number.isFinite(packQty) || packQty < 1) { alert("包裝規格的錠/支數請輸入大於 0 的數字！"); return; }
+            if (!Number.isFinite(capacity) || capacity < 0) { alert("單一容量請輸入有效數字！"); return; }
+            if (!expDate) { alert("請選擇有效期限！"); return; }
+            if (!Number.isFinite(warningDays) || warningDays < 1) { alert("預警天數請輸入大於 0 的整數！"); return; }
 
             const btnAdd = document.getElementById('btn-add');
             btnAdd.disabled = true;
-            btnAdd.innerText = "資料與圖片壓縮轉碼中...";
+            btnAdd.innerText = "資料處理中...";
 
             try {
-                let imageUrl = ""; // 這裡會用來儲存 Base64 字串
-                
-                // 圖片壓縮與 Base64 轉換模組
-                if (imageFile) {
-                    imageUrl = await new Promise((resolve) => {
-                        const reader = new FileReader();
-                        reader.readAsDataURL(imageFile);
-                        reader.onload = (event) => {
-                            const img = new Image();
-                            img.src = event.target.result;
-                            img.onload = () => {
-                                const canvas = document.createElement('canvas');
-                                const MAX_WIDTH = 600; // 調整為 600 寬度，更省雲端資料庫空間
-                                
-                                let targetWidth = img.width;
-                                let targetHeight = img.height;
-                                if (img.width > MAX_WIDTH) {
-                                    targetWidth = MAX_WIDTH;
-                                    targetHeight = img.height * (MAX_WIDTH / img.width);
-                                }
-                                
-                                canvas.width = targetWidth;
-                                canvas.height = targetHeight;
-                                const ctx = canvas.getContext('2d');
-                                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                                
-                                // 直接輸出為壓縮後的 Base64 DataURL (品質 0.6)
-                                const base64Result = canvas.toDataURL('image/jpeg', 0.6);
-                                resolve(base64Result);
-                            };
-                        };
+                const specString = `${packQty} * ${capacity}${capUnit}`;
+                const batchOp = writeBatch(db);
+
+                if (isEditing) {
+                    const updateFields = {
+                        name: name,
+                        specStr: specString,
+                        qtyUnit: qtyUnit,
+                        expDate: expDate,
+                        stock: addQty,
+                        warningDays: warningDays
+                    };
+
+                    if (imageFile) {
+                        const base64 = await compressImageToBase64(imageFile, 600, 0.6);
+                        updateFields.hasImage = true;
+                        batchOp.set(doc(db, "inventoryImages", editingDocId), { data: base64 });
+                        imageCache.set(editingDocId, base64);
+                    }
+
+                    batchOp.update(doc(db, "inventory", editingDocId), updateFields);
+                    await batchOp.commit();
+
+                    alert(`已更新「${name}」的批次資料。`);
+                    editingDocId = null;
+                    resetAddForm();
+                    updateFormModeUI();
+                } else {
+                    const newDocRef = doc(collection(db, "inventory"));
+                    const hasImage = !!imageFile;
+
+                    batchOp.set(newDocRef, {
+                        name: name,
+                        specStr: specString,
+                        qtyUnit: qtyUnit,
+                        expDate: expDate,
+                        stock: addQty,
+                        hasImage: hasImage,
+                        warningDays: warningDays,
+                        createdAt: new Date()
                     });
+
+                    if (imageFile) {
+                        const base64 = await compressImageToBase64(imageFile, 600, 0.6);
+                        batchOp.set(doc(db, "inventoryImages", newDocRef.id), { data: base64 });
+                        imageCache.set(newDocRef.id, base64);
+                    }
+
+                    await batchOp.commit();
+
+                    // 行事曆連結生成
+                    const expirationDate = new Date(expDate);
+                    const notifyDate = new Date(expirationDate);
+                    notifyDate.setDate(notifyDate.getDate() - warningDays);
+
+                    const formatEventDate = (date) => date.toISOString().split('T')[0].replace(/-/g, '');
+                    const eventDateStr = formatEventDate(notifyDate) + '/' + formatEventDate(notifyDate);
+
+                    const details = `【藥品到期預警】\n\n商品名稱：${name}\n規格：${specString}\n本次新增庫存：${addQty} ${qtyUnit}\n實際有效期限：${expDate}\n\n💡 提醒：若此批藥品已提前食用完畢，請直接忽略或刪除此通知！\n🔗 點此回到庫存總表更新最新狀態：${myWebsiteUrl}`;
+
+                    const baseUrl = "https://calendar.google.com/calendar/render?action=TEMPLATE";
+                    const title = encodeURIComponent(`[藥品到期] ${name} (${specString})`);
+                    const detailsEncoded = encodeURIComponent(details);
+                    const finalUrl = `${baseUrl}&text=${title}&dates=${eventDateStr}&details=${detailsEncoded}`;
+
+                    window.open(finalUrl, '_blank');
+
+                    resetAddForm();
+                    alert(`已成功新增「${name}」批次庫存，並開啟 Google 日曆提醒視窗。`);
                 }
 
-                const specString = `${packQty} * ${capacity}${capUnit}`;
-
-                // 直接把長長的 Base64 字串存入 Firestore text 欄位
-                await addDoc(collection(db, "inventory"), {
-                    name: name,
-                    specStr: specString,
-                    qtyUnit: qtyUnit,
-                    expDate: expDate,
-                    stock: addQty, 
-                    imageUrl: imageUrl, // 這裏現在是純文字，不需經由 Storage
-                    warningDays: parseInt(warningDays),
-                    createdAt: new Date()
-                });
-                
-                // 行事曆連結生成
-                const expirationDate = new Date(expDate);
-                const notifyDate = new Date(expirationDate);
-                notifyDate.setDate(notifyDate.getDate() - parseInt(warningDays));
-
-                const formatEventDate = (date) => date.toISOString().split('T')[0].replace(/-/g, '');
-                const eventDateStr = formatEventDate(notifyDate) + '/' + formatEventDate(notifyDate);
-
-                const details = `【藥品到期預警】\n\n商品名稱：${name}\n規格：${specString}\n本次新增庫存：${addQty} ${qtyUnit}\n實際有效期限：${expDate}\n\n💡 提醒：若此批藥品已提前食用完畢，請直接忽略或刪除此通知！\n🔗 點此回到庫存總表更新最新狀態：${myWebsiteUrl}`;
-                
-                const baseUrl = "https://calendar.google.com/calendar/render?action=TEMPLATE";
-                const title = encodeURIComponent(`[藥品到期] ${name} (${specString})`);
-                const detailsEncoded = encodeURIComponent(details);
-                const finalUrl = `${baseUrl}&text=${title}&dates=${eventDateStr}&details=${detailsEncoded}`;
-
-                window.open(finalUrl, '_blank');
-
-                // 清空表單
-                document.getElementById('med-name').value = '';
-                document.getElementById('add-qty').value = '1';
-                document.getElementById('pack-qty').value = '';
-                document.getElementById('capacity').value = '';
-                document.getElementById('exp-date').value = '';
-                document.getElementById('med-image').value = '';
-                
-            } catch (e) { 
+            } catch (e) {
                 console.error(e);
-                alert("新增失敗，請檢查網路連線。"); 
+                alert(isEditing ? "更新失敗，請檢查網路連線。" : "新增失敗，請檢查網路連線。");
             } finally {
                 btnAdd.disabled = false;
-                btnAdd.innerText = "新增批次庫存並加入行事曆 🗓️";
+                updateFormModeUI();
             }
         });
 
-        // 讀取資料庫 (即時監聽)
+        // 讀取資料庫 (即時監聽，文件內不含圖片，輕量快速)
         function loadInventory() {
             const q = query(collection(db, "inventory"), orderBy("expDate"));
             onSnapshot(q, (querySnapshot) => {
                 globalRawData = [];
-                const nameSet = new Set(); 
+                const nameSet = new Set();
 
                 querySnapshot.forEach((docSnap) => {
                     const data = docSnap.data();
@@ -320,50 +445,53 @@
                 });
 
                 const dataList = document.getElementById('med-history-list');
-                dataList.innerHTML = '';
-                nameSet.forEach(name => {
-                    dataList.innerHTML += `<option value="${name}">`;
-                });
+                dataList.innerHTML = Array.from(nameSet).map(name => `<option value="${escapeHtml(name)}">`).join('');
 
                 renderTable();
             });
         }
 
+        // HTML escape：避免資料庫內容（例如惡意寫入的藥品名稱）被當成標籤解析造成 XSS
+        function escapeHtml(str) {
+            if (str == null) return '';
+            return String(str).replace(/[&<>"']/g, (ch) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[ch]));
+        }
+
         // 渲染表格與歸類邏輯
         function renderTable() {
             const tbody = document.getElementById('inventory-list');
-            tbody.innerHTML = ''; 
 
             const groupedProducts = {};
 
-            globalRawData.forEach(doc => {
-                const key = `${doc.name}_${doc.specStr}_${doc.qtyUnit}`;
-                
+            globalRawData.forEach(docData => {
+                const key = `${docData.name}_${docData.specStr}_${docData.qtyUnit}`;
+
                 if (!groupedProducts[key]) {
                     groupedProducts[key] = {
-                        name: doc.name,
-                        specStr: doc.specStr,
-                        qtyUnit: doc.qtyUnit,
-                        imageUrl: doc.imageUrl || "", 
+                        name: docData.name,
+                        specStr: docData.specStr,
+                        qtyUnit: docData.qtyUnit,
+                        repImageDocId: docData.hasImage ? docData.id : null,
                         totalStock: 0,
                         expiries: [],
-                        warningDays: doc.warningDays || 30
+                        warningDays: docData.warningDays || 30
                     };
                 }
-                
-                if(!groupedProducts[key].imageUrl && doc.imageUrl) {
-                    groupedProducts[key].imageUrl = doc.imageUrl;
+
+                if (!groupedProducts[key].repImageDocId && docData.hasImage) {
+                    groupedProducts[key].repImageDocId = docData.id;
                 }
 
-                groupedProducts[key].totalStock += doc.stock;
-                
-                if(doc.stock > 0) {
-                    groupedProducts[key].expiries.push({
-                        docId: doc.id,
-                        dateStr: doc.expDate,
-                        stock: doc.stock
-                    });
-                }
+                groupedProducts[key].totalStock += docData.stock;
+
+                // 保留所有批次（含已扣完的），讓管理員可以在畫面上編輯/刪除歷史批次
+                groupedProducts[key].expiries.push({
+                    docId: docData.id,
+                    dateStr: docData.expDate,
+                    stock: docData.stock
+                });
             });
 
             let displayList = Object.values(groupedProducts).sort((a, b) => {
@@ -372,27 +500,25 @@
                 return 0;
             });
 
-            if(currentFilter === 'in-stock') displayList = displayList.filter(p => p.totalStock > 0);
+            if (currentFilter === 'in-stock') displayList = displayList.filter(p => p.totalStock > 0);
             else if (currentFilter === 'out-stock') displayList = displayList.filter(p => p.totalStock === 0);
 
             const today = new Date();
             today.setHours(0, 0, 0, 0);
 
-            displayList.forEach(product => {
-                let expString = '';
+            const activeBatchMap = {};
+            let batchMapIndex = 0;
+            const imageDocIdsToLoad = [];
+
+            const rowsHtml = displayList.map(product => {
                 let statusHtml = '<span class="status-gray">無庫存</span>';
                 let actionHtml = isAdmin ? `<span style="color:#aaa;">無庫存可扣</span>` : '';
                 let rowClass = product.totalStock === 0 ? 'row-empty' : '';
 
-                if (product.totalStock > 0) {
-                    const expDetails = product.expiries.map(exp => {
-                        const d = new Date(exp.dateStr);
-                        const mmdd = `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
-                        return `${mmdd}(${exp.stock})`;
-                    });
-                    expString = expDetails.join(', ');
+                const activeExpiries = product.expiries.filter(exp => exp.stock > 0);
 
-                    const earliestExp = product.expiries[0];
+                if (activeExpiries.length > 0) {
+                    const earliestExp = activeExpiries[0];
                     const expDateObj = new Date(earliestExp.dateStr);
                     const daysLeft = Math.ceil((expDateObj.getTime() - today.getTime()) / (1000 * 3600 * 24));
 
@@ -401,36 +527,142 @@
                     else statusHtml = '🟢 <span class="status-green">正常</span>';
 
                     if (isAdmin) {
-                        actionHtml = `<button class="btn-action" onclick="window.deductStock('${earliestExp.docId}', ${earliestExp.stock})">扣除 1 ${product.qtyUnit}</button>`;
+                        const myIndex = batchMapIndex++;
+                        activeBatchMap[myIndex] = activeExpiries.map(exp => ({ docId: exp.docId, stock: exp.stock }));
+                        actionHtml = `<button class="btn-action" onclick="window.deductStock(${myIndex}, this)">扣除庫存</button>`;
                     }
                 }
 
-                // 圖片顯示邏輯：Base64 字串可以直接放入 img src 中完美顯示
-                const imgHtml = product.imageUrl 
-                    ? `<img src="${product.imageUrl}" class="med-img">` 
+                const expString = product.expiries.map(exp => {
+                    const d = new Date(exp.dateStr);
+                    const mmdd = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+                    const usedUp = exp.stock <= 0;
+                    const label = usedUp ? `${mmdd}(已用完)` : `${mmdd}(${exp.stock})`;
+                    const style = usedUp ? 'color:#aaa; text-decoration:line-through;' : '';
+                    const icons = isAdmin
+                        ? ` <span style="cursor:pointer;" title="編輯此批次" onclick="window.editBatch('${exp.docId}')">✏️</span><span style="cursor:pointer;" title="刪除此批次" onclick="window.deleteBatch('${exp.docId}')">🗑️</span>`
+                        : '';
+                    return `<span style="${style}">${label}</span>${icons}`;
+                }).join(', ');
+
+                if (product.repImageDocId) imageDocIdsToLoad.push(product.repImageDocId);
+
+                const imgHtml = product.repImageDocId
+                    ? `<div id="img-slot-${product.repImageDocId}" style="width:55px; height:55px; background:#eee; border-radius:4px; border:1px solid #ddd; box-sizing:border-box;"></div>`
                     : `<div style="width:55px; height:55px; background:#eee; color:#aaa; display:flex; align-items:center; justify-content:center; border-radius:4px; font-size:12px; border: 1px solid #ddd; box-sizing:border-box;">無圖</div>`;
 
-                const row = `
+                return `
                     <tr class="${rowClass}">
                         <td>${imgHtml}</td>
-                        <td style="font-weight:bold; font-size:16px;">${product.name}</td>
-                        <td><span class="spec-tag">${product.specStr}</span></td>
-                        <td style="font-size:18px; font-weight:bold;">${product.totalStock} <span style="font-size:14px;font-weight:normal">${product.qtyUnit}</span></td>
+                        <td style="font-weight:bold; font-size:16px;">${escapeHtml(product.name)}</td>
+                        <td><span class="spec-tag">${escapeHtml(product.specStr)}</span></td>
+                        <td style="font-size:18px; font-weight:bold;">${product.totalStock} <span style="font-size:14px;font-weight:normal">${escapeHtml(product.qtyUnit)}</span></td>
                         <td>${expString || '-'}</td>
                         <td>${statusHtml}</td>
                         <td class="admin-only">${actionHtml}</td>
                     </tr>
                 `;
-                tbody.innerHTML += row;
-            });
+            }).join('');
+
+            tbody.innerHTML = rowsHtml || `<tr><td colspan="7" style="text-align:center; color:#888; padding:20px;">目前沒有符合條件的藥品資料</td></tr>`;
+
+            window.__activeBatchMap = activeBatchMap;
+            loadImagesForRows(imageDocIdsToLoad);
         }
 
-        window.deductStock = async function(docId, currentStock) {
-            if(confirm('確定要消耗 1 件庫存嗎？(系統將優先扣除最早到期的批次)')) {
-                const newStock = currentStock - 1;
-                await updateDoc(doc(db, "inventory", docId), { stock: newStock });
+        // 一次扣除指定數量，依到期日由早到晚跨批次自動扣（Firestore batched write，確保原子性）
+        window.deductStock = async function(batchIndex, btnEl) {
+            const batches = window.__activeBatchMap[batchIndex];
+            if (!batches || batches.length === 0) return;
+
+            const totalAvailable = batches.reduce((sum, b) => sum + b.stock, 0);
+            const input = prompt(`要扣除多少數量？(目前共有 ${totalAvailable} 件，將優先扣除最早到期的批次)`, '1');
+            if (input === null) return;
+
+            const qty = parseInt(input, 10);
+            if (!Number.isFinite(qty) || qty < 1) { alert('請輸入大於 0 的整數！'); return; }
+            if (qty > totalAvailable) { alert(`扣除數量不能超過目前庫存（${totalAvailable}）！`); return; }
+
+            if (btnEl) btnEl.disabled = true;
+            try {
+                const batchOp = writeBatch(db);
+                let remaining = qty;
+                for (const b of batches) {
+                    if (remaining <= 0) break;
+                    const deductHere = Math.min(remaining, b.stock);
+                    batchOp.update(doc(db, "inventory", b.docId), { stock: increment(-deductHere) });
+                    remaining -= deductHere;
+                }
+                await batchOp.commit();
+            } catch (e) {
+                console.error(e);
+                alert("扣除失敗，請檢查網路連線。");
+                if (btnEl) btnEl.disabled = false;
             }
-        }
+        };
+
+        // 將表單切換到「編輯批次」模式，載入該批次現有資料
+        window.editBatch = async function(docId) {
+            const docData = globalRawData.find(d => d.id === docId);
+            if (!docData) { alert('找不到此批次資料，畫面可能尚未更新，請重新整理後再試。'); return; }
+
+            const specMatch = /^(.+?)\s*\*\s*([\d.]+)\s*([a-zA-Z]+)$/.exec(docData.specStr || '');
+
+            document.getElementById('med-name').value = docData.name || '';
+            document.getElementById('pack-qty').value = specMatch ? specMatch[1].trim() : '';
+            document.getElementById('capacity').value = specMatch ? specMatch[2] : '';
+            if (specMatch) {
+                const capUnitSelect = document.getElementById('capacity-unit');
+                if ([...capUnitSelect.options].some(o => o.value === specMatch[3])) {
+                    capUnitSelect.value = specMatch[3];
+                }
+            }
+            document.getElementById('add-qty').value = docData.stock;
+            const qtyUnitSelect = document.getElementById('qty-unit');
+            if ([...qtyUnitSelect.options].some(o => o.value === docData.qtyUnit)) {
+                qtyUnitSelect.value = docData.qtyUnit;
+            }
+            document.getElementById('exp-date').value = docData.expDate || '';
+            document.getElementById('warning-days').value = docData.warningDays || 30;
+            document.getElementById('med-image').value = '';
+
+            const preview = document.getElementById('edit-image-preview');
+            if (docData.hasImage) {
+                preview.style.display = 'block';
+                preview.src = '';
+                const data = await getCachedImage(docId);
+                if (data) preview.src = data;
+            } else {
+                preview.style.display = 'none';
+                preview.src = '';
+            }
+
+            editingDocId = docId;
+            updateFormModeUI();
+
+            document.getElementById('admin-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        };
+
+        // 刪除單一批次紀錄（連同其圖片一併刪除，避免留下孤兒資料）
+        window.deleteBatch = async function(docId) {
+            if (!confirm('確定要刪除這筆批次紀錄嗎？此動作無法復原。')) return;
+            try {
+                const batchOp = writeBatch(db);
+                batchOp.delete(doc(db, "inventory", docId));
+                batchOp.delete(doc(db, "inventoryImages", docId));
+                await batchOp.commit();
+
+                imageCache.delete(docId);
+                if (editingDocId === docId) {
+                    editingDocId = null;
+                    resetAddForm();
+                    updateFormModeUI();
+                }
+            } catch (e) {
+                console.error(e);
+                alert("刪除失敗，請檢查網路連線。");
+            }
+        };
     </script>
 </body>
 </html>
